@@ -15,7 +15,88 @@ def setup_seed(seed=0, deterministic = True):
     if deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+# Copied functions from CalibrationPanorama Class 
+# https://github.com/KevinGmelin/F-Pointnet-JRDB/commit/9b1c9b8727eca8798a28bc7a8570897957fa9de8
+def project_velo_to_ref(pts_3d_velo):
+    pts_3d_velo = pts_3d_velo[:, [1, 2, 0, 3]]
+    pts_3d_velo[:, 0] *= -1
+    pts_3d_velo[:, 1] *= -1
 
+    return pts_3d_velo
+
+def project_ref_to_rect(pts_3d_ref):
+    ''' Input and Output are nx4 points '''
+    return pts_3d_ref
+
+def project_velo_to_rect(pts_3d_velo):
+    pts_3d_ref = project_velo_to_ref(pts_3d_velo)
+    return project_ref_to_rect(pts_3d_ref)
+
+def project_rect_to_image(pts_3d_rect):
+    ''' Input: nx4 points in rect camera coord.
+        Output: nx2 points in image2 coord.
+    '''
+    median_focal_length_y = 482.924
+    median_optical_center_y = 209.383 
+    img_width = 3760
+
+    theta = (np.arctan2(pts_3d_rect[:, 0], pts_3d_rect[:, 2]) + np.pi) % (2 * np.pi)
+    horizontal_fraction = theta / (2 * np.pi)
+    x = (horizontal_fraction * img_width) % img_width
+    y = -median_focal_length_y * (
+            pts_3d_rect[:, 1] * np.cos(theta) / pts_3d_rect[:, 2]) + median_optical_center_y
+    pts_2d = np.stack([x, y], axis=1)
+
+    return pts_2d
+
+def project_velo_to_image(pts_3d_velo):
+    ''' Input: nx3 points in velodyne coord.
+        Output: nx2 points in image2 coord.
+    '''
+    pts_3d_rect = project_velo_to_rect(pts_3d_velo)
+    return project_rect_to_image(pts_3d_rect)
+
+def project_image_to_rect(uv_depth):
+    ''' Input: nx3 first two channels are uv, 3rd channel
+                is depth in rect camera coord.
+        Output: nx3 points in rect camera coord.
+    '''
+    median_focal_length_y = 482.924
+    median_optical_center_y = 209.383 
+    img_width = 3760
+
+    n = uv_depth.shape[0]
+
+    theta = (uv_depth[:, 0] / img_width - 0.5) * 2 * np.pi # This theta goes from -pi to pi, which is different from theta in project_rect_to_image
+    x = uv_depth[:, 2] * np.tan(theta)
+    y = (uv_depth[:, 1] - median_optical_center_y) * (uv_depth[:, 2] / np.cos(theta)) / median_focal_length_y 
+
+    pts_3d_rect = np.zeros((n,3))
+    pts_3d_rect[:,0] = x
+    pts_3d_rect[:,1] = y
+    pts_3d_rect[:,2] = uv_depth[:,2]
+    return pts_3d_rect
+
+def project_image_to_velo(uv_depth):
+    pts_3d_rect = project_image_to_rect(uv_depth)
+    return project_rect_to_velo(pts_3d_rect)
+
+def project_rect_to_velo(pts_3d_rect):
+    ''' Input: nx3 points in rect camera coord.
+        Output: nx3 points in velodyne coord.
+    ''' 
+    pts_3d_ref = project_rect_to_ref(pts_3d_rect)
+    return project_ref_to_velo(pts_3d_ref)
+
+def project_rect_to_ref(pts_3d_rect):
+    ''' Input and Output are nx3 points '''
+    return pts_3d_rect
+
+def project_ref_to_velo(pts_3d_ref):
+    pts_3d_ref = pts_3d_ref[:, [2, 0, 1]]
+    pts_3d_ref[:, 1] *= -1
+    pts_3d_ref[:, 2] *= -1
+    return pts_3d_ref
 
 def bbox_camera2lidar(bboxes, tr_velo_to_cam, r0_rect):
     '''
@@ -43,8 +124,7 @@ def bbox_lidar2camera(bboxes, tr_velo_to_cam, r0_rect):
     x_size, y_size, z_size = bboxes[:, 3:4], bboxes[:, 4:5], bboxes[:, 5:6]
     xyz_size = np.concatenate([y_size, z_size, x_size], axis=1)
     extended_xyz = np.pad(bboxes[:, :3], ((0, 0), (0, 1)), 'constant', constant_values=1.0)
-    rt_mat = r0_rect @ tr_velo_to_cam
-    xyz = extended_xyz @ rt_mat.T
+    xyz = project_velo_to_rect(extended_xyz)
     bboxes_camera = np.concatenate([xyz[:, :3], xyz_size, bboxes[:, 6:]], axis=1)
     return bboxes_camera
 
@@ -56,8 +136,8 @@ def points_camera2image(points, P2):
     return: shape=(N, 8, 2)
     '''
     extended_points = np.pad(points, ((0, 0), (0, 0), (0, 1)), 'constant', constant_values=1.0) # (n, 8, 4)
-    image_points = extended_points @ P2.T # (N, 8, 4)
-    image_points = image_points[:, :, :2] / image_points[:, :, 2:3]
+    image_points = project_rect_to_image(extended_points.reshape(-1, 4)) # (n*8, 3)
+    image_points = image_points.reshape(-1, 8, 2)
     return image_points
 
 
@@ -192,6 +272,7 @@ def bbox3d2corners_camera(bboxes):
                         [np.zeros_like(rot_cos), np.ones_like(rot_cos), np.zeros_like(rot_cos)],
                         [-rot_sin, np.zeros_like(rot_cos), rot_cos]], 
                         dtype=np.float32) # (3, 3, n)
+    # TODO: Review the math
     rot_mat = np.transpose(rot_mat, (2, 1, 0)) # (n, 3, 3)
     bboxes_corners = bboxes_corners @ rot_mat # (n, 8, 3)
 

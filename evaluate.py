@@ -80,8 +80,6 @@ def do_eval(det_results, gt_results, CLASSES, saved_path):
 
     MIN_IOUS = {
         'Pedestrian': [0.5, 0.5, 0.5],
-        'Cyclist': [0.5, 0.5, 0.5],
-        'Car': [0.7, 0.7, 0.7]
     }
     MIN_HEIGHT = [40, 25, 25]
 
@@ -336,6 +334,7 @@ def main(args):
                 }
                 
                 calib_info = data_dict['batched_calib_info'][j]
+                # TODO: Remove calib info and check, loaded data is not be used
                 tr_velo_to_cam = calib_info['Tr_velo_to_cam'].astype(np.float32)
                 r0_rect = calib_info['R0_rect'].astype(np.float32)
                 P2 = calib_info['P2'].astype(np.float32)
@@ -378,7 +377,7 @@ if __name__ == '__main__':
     parser.add_argument('--saved_path', default='results', help='your saved path for predicted results')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=4)
-    parser.add_argument('--nclasses', type=int, default=3)
+    parser.add_argument('--nclasses', type=int, default=1)
     parser.add_argument('--no_cuda', action='store_true',
                         help='whether to use cuda')
     args = parser.parse_args()

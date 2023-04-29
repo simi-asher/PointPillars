@@ -118,5 +118,6 @@ def vis_img_3d(img, image_points, labels, rt=True):
             cv2.line(img, (x1, y1), (x2, y2), color, 1)
     if rt:
         return img
-    cv2.imshow('bbox', img)
-    cv2.waitKey(0)
+    # cv2.imshow('bbox', img)
+    # cv2.waitKey(0)
+    cv2.imwrite('./vis.jpg', img)
